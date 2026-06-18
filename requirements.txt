@@ -1,0 +1,7 @@
+torch
+torchvision
+matplotlib
+scipy
+pydantic
+pyyaml
+torchao

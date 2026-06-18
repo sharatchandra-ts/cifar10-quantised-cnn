@@ -1,0 +1,11 @@
+BACKLOG:
+Proper scaling factor generation for dequantisation
+Better documentation and file architecture
+Git resolution
+NumPy solution
+
+Make benchmark better
+Change file sorage and sort it out
+make main file better, and a better pipeline file
+
+NEXT WEEK:
