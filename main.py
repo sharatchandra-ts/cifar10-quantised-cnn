@@ -1,6 +1,7 @@
 import logging
 import os
 import warnings
+from types import SimpleNamespace
 
 import torch
 
@@ -49,15 +50,18 @@ def save_experiment_artifacts(net, quant_bits: QuantBits):
 
 
 def main(force_train: bool = False, QUANT_BITS: QuantBits = QuantBits.INT4):
-    config = load_config()
+    config: SimpleNamespace = load_config()  # type: ignore
+    model_config = config.model
+    train_config = config.train
+
     MODEL_PATH = f"./models/{QUANT_BITS.name}/golden_model_qat_{QUANT_BITS.name}.pt"
 
     print(f"Pipeline Setup: [Mode: QAT] [Target Precision: {QUANT_BITS.name}]")
     print(
-        f"Config: layers={config.model.layer_depth}  "
-        f"channels={config.model.channels}  "
-        f"use_gap={getattr(config.model, 'use_gap', True)}  "
-        f"use_bn={getattr(config.model, 'use_bn', True)}"
+        f"Config: layers={model_config.layer_depth}  "
+        f"channels={model_config.channels}  "
+        f"use_gap={getattr(model_config, 'use_gap', True)}  "
+        f"use_bn={getattr(model_config, 'use_bn', True)}"
     )
 
     device = torch.device(
@@ -84,10 +88,10 @@ def main(force_train: bool = False, QUANT_BITS: QuantBits = QuantBits.INT4):
 
     trainloader, valloader, testloader = get_cifar10_loaders(
         root="./data",
-        batch_size=config.train.batch_size,
-        greyscale=config.model.greyscale,
-        num_workers=config.train.num_workers,
-        val_split=config.train.val_split,
+        batch_size=train_config.batch_size,
+        greyscale=model_config.greyscale,
+        num_workers=train_config.num_workers,
+        val_split=train_config.val_split,
     )
 
     net = GoldenCNNModel(config=config)

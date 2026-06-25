@@ -8,7 +8,7 @@ from utils.config import load_config
 
 def train(trainloader, valloader, net, device: torch.device):
     config = load_config()
-    train_cfg = config.train
+    train_cfg = config.train  # type: ignore
 
     print(f"Training golden model on device: {device}")
     net.to(device)

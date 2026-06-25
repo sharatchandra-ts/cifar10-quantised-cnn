@@ -186,14 +186,18 @@ def main():
         # Only setup QAT module wrappers if we aren't working with native Float32
         if QUANT_BITS != QuantBits.FL32:
             prepare_qat(net, bits=QUANT_BITS)
-            MODEL_PATH = f"./models/golden_model_qat_{QUANT_BITS.name}.pt"
+            MODEL_PATH = (
+                f"./models/{QUANT_BITS.name}/golden_model_qat_{QUANT_BITS.name}.pt"
+            )
         else:
             # Check for a specific vanilla float32 checkpoint if you have one,
             # otherwise defaults to base weights or falls back to standard qat file
-            MODEL_PATH = f"./models/golden_model_qat_{QUANT_BITS.name}.pt"
+            MODEL_PATH = (
+                f"./models/{QUANT_BITS.name}/golden_model_qat_{QUANT_BITS.name}.pt"
+            )
             if not os.path.exists(MODEL_PATH):
                 # Fallback check for alternative standard naming conventions
-                MODEL_PATH = "./models/golden_model.pt"
+                MODEL_PATH = f"./models/{QUANT_BITS.name}/golden_model.pt"
 
         if not os.path.exists(MODEL_PATH):
             print(f"  Skipping {QUANT_BITS.name}: Checkpoint not found at {MODEL_PATH}")

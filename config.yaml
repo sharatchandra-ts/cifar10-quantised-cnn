@@ -13,19 +13,19 @@ model:
   # Number of output classes, 10 for the CIFAR10 dataset
   num_classes: 10
   # Channels config for each convolution
-  channels: [32, 64, 64, 64]
+  channels: [16, 32, 64, 64]
   # FC layer config for linear nn
   fc_sizes: [64, 32]
   # replace FC stack with global average pooling
   use_gap: true
   # batch norm after every conv
   use_bn: true
-  negative_slope: 0.01
+  negative_slope: 0.00
   dropout: 0.3
   # file_path: "models/golden_model_0.pt"
 
 train:
-  epochs: 20
+  epochs: 200
   learning_rate: 0.1
   batch_size: 64
   num_workers: 0
