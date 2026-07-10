@@ -2,7 +2,12 @@ import os
 import re
 
 
-def hex_to_coe(input_hex_path, output_coe_path, word_width_bits=32):
+def hex_to_coe(
+    input_hex_path,
+    output_coe_path,
+    word_width_bits=32,
+    pixel_width_bits=8,
+):
     """
     Converts a continuous hex file into a Xilinx .coe file based on specified bit width.
 
@@ -10,13 +15,11 @@ def hex_to_coe(input_hex_path, output_coe_path, word_width_bits=32):
     :param output_coe_path: Path where the output .coe file will be written.
     :param word_width_bits: Target width of the BRAM in bits (e.g., 32, 64, 16).
     """
-    if word_width_bits % 4 != 0:
-        raise ValueError(
-            "Word width in bits must be a multiple of 4 (since 1 hex digit = 4 bits)."
-        )
-
-    # Each hex digit represents 4 bits (e.g., 32 bits = 8 hex digits)
     chars_per_word = word_width_bits // 4
+    chars_per_pixel = pixel_width_bits // 4
+
+    if word_width_bits % pixel_width_bits != 0:
+        raise ValueError("Pixel width must divide word width.")
 
     if not os.path.exists(input_hex_path):
         print(f"Error: Source file {input_hex_path} not found.")
@@ -30,12 +33,19 @@ def hex_to_coe(input_hex_path, output_coe_path, word_width_bits=32):
 
     # 2. Chunk the continuous hex string into blocks matching the width
     coe_words = []
+
     for i in range(0, len(hex_digits), chars_per_word):
         word = hex_digits[i : i + chars_per_word]
 
-        # If the last block is shorter than required width, pad it with leading zeros
+        # Pad the final incomplete word
         if len(word) < chars_per_word:
             word = word.zfill(chars_per_word)
+
+        pixel_list = [
+            word[j : j + chars_per_pixel] for j in range(0, len(word), chars_per_pixel)
+        ]
+
+        word = "".join(reversed(pixel_list))
 
         coe_words.append(word.lower())
 
@@ -69,7 +79,7 @@ def hex_to_coe(input_hex_path, output_coe_path, word_width_bits=32):
 
 if __name__ == "__main__":
     hex_to_coe(
-        "weights/verification/output_pixels.hex",
-        "weights/export/output_pixels.coe",
+        "weights/verification/output_pixels_full.hex",
+        "weights/export/coe/output_pixels_full.coe",
         word_width_bits=32,
     )

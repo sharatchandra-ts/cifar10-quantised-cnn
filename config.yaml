@@ -19,8 +19,8 @@ model:
   # replace FC stack with global average pooling
   use_gap: true
   # batch norm after every conv
-  use_bn: true
-  negative_slope: 0.00
+  use_bn: false
+  negative_slope: 0.0156
   dropout: 0.3
   # file_path: "models/golden_model_0.pt"
 

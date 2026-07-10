@@ -42,7 +42,7 @@ def coe_to_assembly(coe_file_path, output_s_path, symbol_name="cnn_data"):
 # Example usage:
 # This converts your uploaded 'image.coe' into 'cnn_image.S'
 coe_to_assembly(
-    "weights/export/output_pixels.coe",
-    "weights/export/cnn_output.S",
+    "weights/export/coe/image2.coe",
+    "weights/export/asm/input_image.S",
     symbol_name="cnn_input_image",
 )
