@@ -2,6 +2,10 @@ metadata:
   model_name: "golden_model"
   version: "0.0.1"
 
+data:
+  # torchvision stores CIFAR-10 files here. `make data` creates/downloads them.
+  root: "data"
+
 model:
   kernel_size: 3
   maxpool_size: 2
@@ -19,14 +23,23 @@ model:
   # replace FC stack with global average pooling
   use_gap: true
   # batch norm after every conv
-  use_bn: false
+  use_bn: true
   negative_slope: 0.0156
   dropout: 0.3
   # file_path: "models/golden_model_0.pt"
 
 train:
-  epochs: 200
+  epochs: 50
   learning_rate: 0.1
   batch_size: 64
   num_workers: 0
   val_split: 0.1
+
+export:
+  # `make image` always uses this fixed CIFAR-10 test image for reproducibility.
+  sample_index: 0
+  image_dir: "artifacts/input"
+  hardware_dir: "artifacts/hardware"
+  image_basename: "cifar10_test_0000_gray_u8"
+  word_width_bits: 32
+  assembly_symbol: "cnn_input_image"

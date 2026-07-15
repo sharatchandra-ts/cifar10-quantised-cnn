@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from quant import FakeQuantizeActivation, QuantBits
+
 NUM_CLASSES: int = 10
 MAXPOOL_SIZE: int = 2
 
@@ -43,6 +45,20 @@ class GoldenCNNModel(nn.Module):
         )  # avoids dead neurons vs ReLU
         self.dropout = nn.Dropout(p=cfg.dropout)
 
+        # ── Activation quantization ─────────────────────────────────────
+        # Hardware boundary: every activation tensor crossing a layer edge
+        # is int8, PER-TENSOR (one scale, not per-channel like weights).
+        # input_quant: quantizes the input image once, defines s_x for layer 0.
+        # act_quant[i]: quantizes the output of block i (post pool), which
+        #   becomes s_x for block i+1.
+        self.input_quant = FakeQuantizeActivation(bits=QuantBits.INT8)
+        self.act_quant = nn.ModuleList(
+            [FakeQuantizeActivation(bits=QuantBits.INT8) for _ in cfg.channels]
+        )
+        # Quantizes the GAP output before the classifier's Linear layer,
+        # since that Linear is also int4-weight and needs an int8 input.
+        self.gap_quant = FakeQuantizeActivation(bits=QuantBits.INT8)
+
         # ── Classifier ───────────────────────────────────────────────────
         final_ch = cfg.channels[self.num_active_layers - 1]
 
@@ -56,8 +72,10 @@ class GoldenCNNModel(nn.Module):
             flat_size = self._compute_flat_size(1 if cfg.greyscale else 3)
             fc_in = flat_size
             self.fc_layers = nn.ModuleList()
+            self.fc_quant = nn.ModuleList()
             for fc_out in cfg.fc_sizes:
                 self.fc_layers.append(nn.Linear(fc_in, fc_out))
+                self.fc_quant.append(FakeQuantizeActivation(bits=QuantBits.INT8))
                 fc_in = fc_out
             self.classifier = nn.Linear(fc_in, NUM_CLASSES)
 
@@ -69,20 +87,30 @@ class GoldenCNNModel(nn.Module):
             return x.numel()
 
     def forward(self, x):
+        # Quantize the input image -- defines s_x for the very first conv.
+        # (If your dataloader already emits int8-range values this just
+        # re-affirms that scale; if it normalizes to e.g. [-1, 1] this is
+        # where that gets mapped into the int8 domain the hardware expects.)
+        x = self.input_quant(x)
+
         for i in range(self.num_active_layers):
             x = self.conv_layers[i](x)
             if self.use_bn:
                 x = self.bn_layers[i](x)
             x = self.act(x)
             x = self.pool(x)
+            # Hardware layer boundary: requantize back to int8 before the
+            # next conv reads it. This output scale IS s_x for block i+1.
+            x = self.act_quant[i](x)
 
         if self.use_gap:
             x = self.gap(x)  # [B, C, H, W] → [B, C, 1, 1]
             x = x.flatten(1)  # [B, C, 1, 1] → [B, C]
+            x = self.gap_quant(x)  # int8 input for the classifier Linear
         else:
             x = torch.flatten(x, 1)
-            for fc in self.fc_layers:
-                x = self.act(fc(x))
+            for fc, fc_q in zip(self.fc_layers, self.fc_quant):
+                x = fc_q(self.act(fc(x)))
 
         x = self.dropout(x)
         return self.classifier(x)

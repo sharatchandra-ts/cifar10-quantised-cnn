@@ -5,3 +5,5 @@ scipy
 pydantic
 pyyaml
 torchao
+scikit-image
+pillow

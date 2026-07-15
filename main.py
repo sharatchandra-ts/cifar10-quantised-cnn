@@ -1,13 +1,27 @@
+import argparse
 import logging
 import os
 import warnings
 from types import SimpleNamespace
 
 import torch
+import torch.nn as nn
 
 from data_loader import get_cifar10_loaders
 from model import GoldenCNNModel
-from quant import FakeQuantizeWeight, QuantBits, convert_qat, export_hex, prepare_qat
+import copy
+
+from quant import (
+    FakeQuantizeWeight,
+    QuantBits,
+    compute_fixed_point_scale,
+    convert_qat,
+    export_hex,
+    export_requant_hex,
+    fold_bn_pair,
+    prepare_qat,
+    quantize_bias,
+)
 from test import test
 from train import train
 from utils.config import load_config
@@ -16,10 +30,67 @@ logging.disable(logging.WARNING)
 warnings.filterwarnings("ignore")
 
 
+def build_bn_folded_export_model(net):
+    """
+    Deep-copy net and fold each conv_layers[i]/bn_layers[i] pair into a
+    single bias-carrying conv. Does NOT touch the live training model —
+    BN running stats are still needed if you train further or re-evaluate
+    the FP32/QAT-with-BN accuracy afterward.
+    """
+    export_net = copy.deepcopy(net)
+    if not export_net.use_bn:
+        return export_net
+
+    for i in range(export_net.num_active_layers):
+        fq_weight_module = export_net.conv_layers[i]  # FakeQuantizeWeight
+        bn_module = export_net.bn_layers[i]
+        folded_conv = fold_bn_pair(fq_weight_module.module, bn_module)
+        fq_weight_module.module = folded_conv
+        export_net.bn_layers[i] = nn.Identity()
+    return export_net
+
+
+def build_requant_entries(export_net, frac_bits: int = 16):
+    """
+    Assemble the per-layer fixed-point requant table.
+    s_x for block i is: input_quant's scale (i==0) or act_quant[i-1]'s scale.
+    s_y for block i is: act_quant[i]'s scale (this block's own output).
+    """
+    entries = []
+    for i in range(export_net.num_active_layers):
+        fq_weight_module = export_net.conv_layers[i]
+        s_x = (
+            export_net.input_quant.get_scale()
+            if i == 0
+            else export_net.act_quant[i - 1].get_scale()
+        )
+        s_y = export_net.act_quant[i].get_scale()
+
+        _, s_w = fq_weight_module.get_quantized_weights()  # per-channel scale
+        M0, fb = compute_fixed_point_scale(s_x, s_w, s_y, frac_bits=frac_bits)
+
+        bias = fq_weight_module.module.bias
+        bias_int32 = (
+            quantize_bias(bias.data, s_x, s_w)
+            if bias is not None
+            else torch.zeros_like(s_w, dtype=torch.int32)
+        )
+
+        entries.append(
+            {
+                "name": f"conv_layers.{i}",
+                "M0": M0,
+                "frac_bits": fb,
+                "bias_int32": bias_int32,
+            }
+        )
+    return entries
+
+
 def save_experiment_artifacts(net, quant_bits: QuantBits):
     """Save all artifacts. Order matters — export before convert_qat."""
     print("\n--- Saving Experiment Artifacts ---")
-    os.makedirs("models", exist_ok=True)
+    os.makedirs(f"models/{quant_bits.name}", exist_ok=True)
 
     # 1. QAT checkpoint (FakeQuantizeWeight wrappers still intact)
     qat_path = f"models/{quant_bits.name}/golden_model_qat_{quant_bits.name}.pt"
@@ -37,12 +108,26 @@ def save_experiment_artifacts(net, quant_bits: QuantBits):
     torch.save(scales, scales_path)
     print(f" -> Saved Scales Profile:         {scales_path}")
 
-    # 3. Hex export (requires FakeQuantizeWeight to exist)
-    hex_path = f"models/{quant_bits.name}/weights_{quant_bits.name}.hex"
-    export_hex(net, hex_path)
-    print(f" -> Exported Hardware Hex:        {hex_path}")
+    if quant_bits != QuantBits.FL32:
+        # 2b. BN-folded export copy — hardware has no BN, so weights/hex/requant
+        # must come from the folded model, never the live training model.
+        export_net = build_bn_folded_export_model(net)
+
+        # 3. Hex export (requires FakeQuantizeWeight to exist)
+        hex_path = f"models/{quant_bits.name}/weights_{quant_bits.name}.hex"
+        export_hex(export_net, hex_path)
+        print(f" -> Exported Hardware Hex:        {hex_path}")
+
+        # 3b. Requant table: per-channel M0/frac_bits + int32 bias, derived from
+        # the calibrated activation scales (input_quant / act_quant EMAs).
+        requant_path = f"models/{quant_bits.name}/requant_{quant_bits.name}.hex"
+        requant_entries = build_requant_entries(export_net)
+        export_requant_hex(requant_entries, requant_path)
+        print(f" -> Exported Requant Table:       {requant_path}")
 
     # 4. convert_qat LAST — strips FakeQuantizeWeight, bakes quantized weights in
+    # (applied to the ORIGINAL net, since that one still has live BN layers
+    # and is what you'd keep training/evaluating in PyTorch)
     convert_qat(net)
     hw_path = f"models/{quant_bits.name}/golden_model_hardware_{quant_bits.name}.pt"
     torch.save(net.state_dict(), hw_path)
@@ -87,7 +172,7 @@ def main(force_train: bool = False, QUANT_BITS: QuantBits = QuantBits.INT4):
     )
 
     trainloader, valloader, testloader = get_cifar10_loaders(
-        root="./data",
+        root=config.data.root,
         batch_size=train_config.batch_size,
         greyscale=model_config.greyscale,
         num_workers=train_config.num_workers,
@@ -136,4 +221,17 @@ def main(force_train: bool = False, QUANT_BITS: QuantBits = QuantBits.INT4):
 
 
 if __name__ == "__main__":
-    main(force_train=True, QUANT_BITS=QuantBits.INT4)
+    parser = argparse.ArgumentParser(description="Train, evaluate, and export the QAT CNN.")
+    parser.add_argument(
+        "--train",
+        action="store_true",
+        help="Train from scratch even if a QAT checkpoint already exists.",
+    )
+    parser.add_argument(
+        "--quant-bits",
+        choices=[bits.name for bits in QuantBits],
+        default=QuantBits.INT4.name,
+        help="Target weight precision (default: INT4).",
+    )
+    args = parser.parse_args()
+    main(force_train=args.train, QUANT_BITS=QuantBits[args.quant_bits])

@@ -60,8 +60,8 @@ def hex_to_assembly(
 
 if __name__ == "__main__":
     hex_to_assembly(
-        "weights/verification/output_pixels_full.hex",
-        "weights/export/asm/output_pixels_full.S",
+        "weights/verification/weights.hex",
+        "weights/export/asm/layer1_weights.S",
         word_width_bits=32,
-        pixel_width_bits=16,
+        pixel_width_bits=4,
     )

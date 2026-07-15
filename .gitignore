@@ -1,10 +1,16 @@
-.venv
-__pycache__
+.venv/
+__pycache__/
 .DS_Store
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.py[cod]
 
-data/*
-weights/*
-
-models/*
-!stats.json
-!STATS.md
+data/
+weights/
+models/
+artifacts/
